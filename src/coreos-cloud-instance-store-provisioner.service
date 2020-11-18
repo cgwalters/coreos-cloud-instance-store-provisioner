@@ -1,0 +1,22 @@
+[Unit]
+Description=Configure CoreOS instance storage
+ConditionKernelCommandLine=ignition.firstboot
+DefaultDependencies=no
+After=sysinit.target
+Before=basic.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/coreos-cloud-instance-store-provisioner
+# This way our working directory isn't writable by default.
+WorkingDirectory=/usr
+# Various hardening flags just on general principle.  We need
+# to run as root, but let's avoid accidental damage.
+ProtectHome=yes
+ReadOnlyPaths=/usr
+PrivateTmp=yes
+PrivateNetwork=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
