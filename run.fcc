@@ -15,8 +15,10 @@ systemd:
         [Service]
         Type=oneshot
         RemainAfterExit=yes
-        ExecStart=/bin/sh -c 'curl -L -o /usr/local/bin/ccisp https://fedorapeople.org/~walters/coreos-cloud-instance-store-provisioner && chmod a+x /usr/local/bin/ccisp'
-        ExecStart=/usr/local/bin/ccisp
+        ExecStart=/bin/sh -c 'curl -L -o /usr/local/bin/ccisp https://fedorapeople.org/~walters/coreos-cloud-instance-store-provisioner && chmod a+x /usr/local/bin/ccisp && /usr/local/bin/ccisp'
+
+        [Install]
+        WantedBy=basic.target
 storage:
   files:
     - path: /etc/coreos-cloud-instance-store-provisioner.yaml
