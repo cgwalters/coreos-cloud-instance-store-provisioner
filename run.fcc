@@ -1,0 +1,28 @@
+# Configure /var/lib/containers and /var/lib/etcd to use the instance storage
+variant: fcos
+version: 1.0.0
+systemd:
+  units:
+    - name: ccisp.service
+      enabled: true
+      contents: |
+        [Unit]
+        DefaultDependencies=no
+        Before=basic.target
+        After=sysinit.target
+        ConditionKernelCommandLine=ignition.firstboot
+
+        [Service]
+        Type=oneshot
+        RemainAfterExit=yes
+        ExecStart=/bin/sh -c 'curl -L -o /usr/local/bin/ccisp https://fedorapeople.org/~walters/coreos-cloud-instance-store-provisioner && chmod a+x /usr/local/bin/ccisp'
+        ExecStart=/usr/local/bin/ccisp
+storage:
+  files:
+    - path: /etc/coreos-cloud-instance-store-provisioner.yaml
+      contents:
+        inline: |
+          directories:
+            - /var/lib/containers
+            - /var/lib/etcd
+      mode: 0644
