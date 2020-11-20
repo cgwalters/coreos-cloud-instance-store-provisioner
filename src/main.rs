@@ -224,6 +224,19 @@ WantedBy=local-fs.target
     }
 }
 
+mod selinux {
+    use super::*;
+
+    pub(crate) fn copy_context<S: AsRef<Path>, D: AsRef<Path>>(src: S, dest: D) -> Result<()> {
+        let src = src.as_ref();
+        let dest = dest.as_ref();
+        let mut refarg = std::ffi::OsString::from("--reference=");
+        refarg.push(src);
+        Command::new("chcon").arg(&refarg).arg(dest).run()?;
+        Ok(())
+    }
+}
+
 fn main() -> Result<()> {
     let configpath = Path::new(CONFIG_PATH);
     if !configpath.exists() {
@@ -258,20 +271,26 @@ fn main() -> Result<()> {
     let dev = dev.as_str();
     Command::new("mkfs.xfs").arg(dev).run()?;
     create_dir(MOUNTPOINT).context("creating mountpoint")?;
-    let mountunit = systemd::write_mount_unit(dev, MOUNTPOINT, "xfs").context("failed to write mount unit")?;
+    let mountunit =
+        systemd::write_mount_unit(dev, MOUNTPOINT, "xfs").context("failed to write mount unit")?;
     Command::new("systemctl").arg("daemon-reload").run()?;
     Command::new("systemctl")
         .args(&["enable", "--now"])
         .arg(&mountunit)
         .run()?;
+    selinux::copy_context("/var", MOUNTPOINT)?;
     let root = openat::Dir::open("/").context("opening /")?;
     for d in config.directories.iter().map(Path::new) {
-        root.remove_all(d).with_context(|| format!("Removing {:?}", d))?;
         let name = d
             .file_name()
             .ok_or_else(|| anyhow!("Expected filename in {:?}", d))?;
         let target = Path::new(MOUNTPOINT).join(name);
         create_dir(&target).context("creating target dir")?;
+        if d.exists() {
+            selinux::copy_context(&d, &target)?;
+        }
+        root.remove_all(d)
+            .with_context(|| format!("Removing {:?}", d))?;
         std::os::unix::fs::symlink(&target, d)
             .with_context(|| format!("creating symlink {:?}", d))?;
         println!("Set up {:?} to use instance storage", d);
