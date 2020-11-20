@@ -1,0 +1,27 @@
+# A MachineConfig object which sets up /var/lib/containers and /var/lib/etcd on the instance store
+ignition:
+  version: 3.0.0
+storage:
+  files:
+  - contents:
+      source: data:,directories%3A%0A%20%20-%20%2Fvar%2Flib%2Fcontainers%0A%20%20-%20%2Fvar%2Flib%2Fetcd%0A
+    mode: 420
+    path: /etc/coreos-cloud-instance-store-provisioner.yaml
+systemd:
+  units:
+  - contents: |
+      [Unit]
+      After=network-online.target
+      Requires=network-online.target
+      Before=machine-config-daemon-firstboot.service
+      ConditionKernelCommandLine=ignition.firstboot
+
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      ExecStart=/bin/sh -c 'curl -L -o /usr/local/bin/ccisp https://fedorapeople.org/~walters/coreos-cloud-instance-store-provisioner && chmod a+x /usr/local/bin/ccisp && /usr/local/bin/ccisp'
+
+      [Install]
+      WantedBy=multi-user.target
+    enabled: true
+    name: coreos-cloud-instance-store-provisioner.service
