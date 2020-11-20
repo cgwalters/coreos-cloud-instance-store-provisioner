@@ -10,6 +10,7 @@ systemd:
         After=network-online.target
         Requires=network-online.target
         Before=machine-config-daemon-firstboot.service
+        ConditionKernelCommandLine=ignition.firstboot
 
         [Service]
         Type=oneshot

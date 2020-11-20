@@ -83,32 +83,36 @@ mod coreos {
     }
 }
 
-mod nvme {
+mod block {
     use super::*;
 
     #[derive(Debug, Deserialize)]
-    #[serde(rename_all = "PascalCase")]
     struct DevicesOutput {
-        devices: Vec<Device>,
+        blockdevices: Vec<Device>,
     }
 
     #[derive(Debug, Deserialize)]
-    #[serde(rename_all = "PascalCase")]
     pub(crate) struct Device {
-        pub(crate) device_path: String,
-        pub(crate) model_number: String,
-        pub(crate) serial_number: String,
+        pub(crate) name: String,
+        pub(crate) serial: Option<String>,
+        pub(crate) model: Option<String>,
+    }
+
+    impl Device {
+        pub(crate) fn path(&self) -> String {
+            format!("/dev/{}", &self.name)
+        }
     }
 
     pub(crate) fn list() -> Result<Vec<Device>> {
-        let o = Command::new("nvme")
-            .args(&["list", "-o", "json"])
+        let o = Command::new("lsblk")
+            .args(&["-J", "-o", "NAME,SERIAL,MODEL"])
             .output()?;
         if !o.status.success() {
             bail!("Failed to list nvme devices");
         }
         let devs: DevicesOutput = serde_json::from_reader(&*o.stdout)?;
-        Ok(devs.devices)
+        Ok(devs.blockdevices)
     }
 }
 
@@ -153,11 +157,15 @@ mod aws {
     const INSTANCE_MODEL: &str = "Amazon EC2 NVMe Instance Storage";
 
     pub(crate) fn devices() -> Result<Vec<String>> {
-        Ok(nvme::list()?
+        Ok(block::list()?
             .into_iter()
             .filter_map(|dev| {
-                if dev.model_number == INSTANCE_MODEL {
-                    Some(dev.device_path)
+                if let Some(ref model) = dev.model.as_ref() {
+                    if model.as_str().trim() == INSTANCE_MODEL {
+                        Some(dev.path())
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 }
@@ -175,11 +183,15 @@ mod qemu {
     const PREFIX: &str = "CoreOSQEMUInstance";
 
     pub(crate) fn devices() -> Result<Vec<String>> {
-        Ok(nvme::list()?
+        Ok(block::list()?
             .into_iter()
             .filter_map(|dev| {
-                if dev.serial_number.starts_with(PREFIX) {
-                    Some(dev.device_path)
+                if let Some(serial) = dev.serial.as_ref() {
+                    if serial.trim().starts_with(PREFIX) {
+                        Some(dev.path())
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 }
@@ -197,9 +209,13 @@ mod systemd {
         what_path: &str,
         where_path: &str,
         mnt_type: &str,
+        opts: Option<&str>,
     ) -> Result<String> {
         let dir = openat::Dir::open("/etc/systemd/system")?;
         let name = format!("{}.mount", unit::escape_path(where_path));
+        let opts = opts
+            .map(|opts| Cow::Owned(format!("Options={}", opts)))
+            .unwrap_or_else(|| Cow::Borrowed(""));
         dir.write_file_with(&name, 0o644, |f| -> Result<()> {
             write!(
                 f,
@@ -210,13 +226,15 @@ Before=local-fs.target
 What={what_path}
 Where={where_path}
 Type={mnt_type}
+{opts}
 
 [Install]
 WantedBy=local-fs.target
 "##,
                 what_path = what_path,
                 where_path = where_path,
-                mnt_type = mnt_type
+                mnt_type = mnt_type,
+                opts = opts,
             )?;
             Ok(())
         })?;
@@ -271,8 +289,8 @@ fn main() -> Result<()> {
     let dev = dev.as_str();
     Command::new("mkfs.xfs").arg(dev).run()?;
     create_dir(MOUNTPOINT).context("creating mountpoint")?;
-    let mountunit =
-        systemd::write_mount_unit(dev, MOUNTPOINT, "xfs").context("failed to write mount unit")?;
+    let mountunit = systemd::write_mount_unit(dev, MOUNTPOINT, "xfs", None)
+        .context("failed to write mount unit")?;
     Command::new("systemctl").arg("daemon-reload").run()?;
     Command::new("systemctl")
         .args(&["enable", "--now"])
@@ -280,7 +298,9 @@ fn main() -> Result<()> {
         .run()?;
     selinux::copy_context("/var", MOUNTPOINT)?;
     let root = openat::Dir::open("/").context("opening /")?;
+    let mut units = Vec::new();
     for d in config.directories.iter().map(Path::new) {
+        let d_utf8 = d.to_str().expect("utf8");
         let name = d
             .file_name()
             .ok_or_else(|| anyhow!("Expected filename in {:?}", d))?;
@@ -291,9 +311,23 @@ fn main() -> Result<()> {
         }
         root.remove_all(d)
             .with_context(|| format!("Removing {:?}", d))?;
-        std::os::unix::fs::symlink(&target, d)
-            .with_context(|| format!("creating symlink {:?}", d))?;
+        std::fs::create_dir(d).with_context(|| format!("Creating {}", d_utf8))?;
+        // Sadly crio on RHEL8 at least bails out if /var/lib/containers is a symlink.
+        // So we use bind mounts instead.
+        units.push(systemd::write_mount_unit(
+            target.to_str().expect("utf8"),
+            d_utf8,
+            "none",
+            Some("bind"),
+        )?);
         println!("Set up {:?} to use instance storage", d);
+    }
+    Command::new("systemctl").arg("daemon-reload").run()?;
+    for unit in units {
+        Command::new("systemctl")
+            .args(&["enable", "--now"])
+            .arg(&unit)
+            .run()?;
     }
     Ok(())
 }
