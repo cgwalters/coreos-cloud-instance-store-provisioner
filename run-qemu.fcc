@@ -1,4 +1,5 @@
 # Configure /var/lib/containers and /var/lib/etcd to use the instance storage
+# TODO: experiment with doing this with /var/log too.
 variant: fcos
 version: 1.0.0
 systemd:

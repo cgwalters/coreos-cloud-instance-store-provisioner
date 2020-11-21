@@ -1,5 +1,6 @@
 //! Automatically set up a filesystem for instance-local storage
-//! and redirect desired ephemeral paths to it.
+//! and redirect desired directory paths to it.  Good examples
+//! for this are /var/lib/containers, /var/log, etc.
 //! https://github.com/coreos/ignition/issues/1126
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -10,6 +11,7 @@ use std::fs::create_dir;
 use std::path::Path;
 use std::process::Command;
 
+const LABEL: &str = "ccisp-store";
 const CONFIG_PATH: &str = "/etc/coreos-cloud-instance-store-provisioner.yaml";
 const MOUNTPOINT: &str = "/var/mnt/instance-storage";
 
@@ -96,20 +98,29 @@ mod block {
         pub(crate) name: String,
         pub(crate) serial: Option<String>,
         pub(crate) model: Option<String>,
+        pub(crate) label: Option<String>,
+        pub(crate) fstype: Option<String>,
+        pub(crate) children: Option<Vec<Device>>,
     }
 
     impl Device {
+        // RHEL8's lsblk doesn't have PATH, so we do it
         pub(crate) fn path(&self) -> String {
             format!("/dev/{}", &self.name)
         }
     }
 
+    pub(crate) fn wipefs(dev: &str) -> Result<()> {
+        Command::new("wipefs").arg("-a").arg(dev).run()?;
+        Ok(())
+    }
+
     pub(crate) fn list() -> Result<Vec<Device>> {
         let o = Command::new("lsblk")
-            .args(&["-J", "-o", "NAME,SERIAL,MODEL"])
+            .args(&["-J", "-o", "NAME,SERIAL,MODEL,LABEL,FSTYPE"])
             .output()?;
         if !o.status.success() {
-            bail!("Failed to list nvme devices");
+            bail!("Failed to list block devices");
         }
         let devs: DevicesOutput = serde_json::from_reader(&*o.stdout)?;
         Ok(devs.blockdevices)
@@ -159,18 +170,64 @@ mod aws {
     pub(crate) fn devices() -> Result<Vec<String>> {
         Ok(block::list()?
             .into_iter()
-            .filter_map(|dev| {
-                if let Some(ref model) = dev.model.as_ref() {
-                    if model.as_str().trim() == INSTANCE_MODEL {
-                        Some(dev.path())
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
+            .filter(|dev| {
+                dev.model
+                    .as_ref()
+                    .filter(|model| model.trim() == INSTANCE_MODEL)
+                    .is_some()
             })
+            .map(|d| d.path())
             .collect())
+    }
+}
+
+mod azure {
+    use super::*;
+    use block::Device;
+
+    const MODEL: &str = "Virtual Disk";
+    const FSTYPE: &str = "ntfs";
+    const LABEL: &str = "Temporary Storage";
+
+    /// On Azure, we the device will be pre-formatted as ntfs, so we actually
+    /// look for a block device with a single child that matches.
+    fn filtermap_child_ntfs(dev: Device) -> Option<String> {
+        let child = if let Some(children) = dev.children.as_ref() {
+            if children.len() == 1 {
+                &children[0]
+            } else {
+                return None;
+            }
+        } else {
+            return None;
+        };
+        if let (Some(label), Some(fstype)) = (child.label.as_ref(), child.fstype.as_ref()) {
+            if label.as_str().trim() == LABEL && fstype.as_str().trim() == FSTYPE {
+                let devpath = dev.path();
+                return Some(devpath);
+            }
+        }
+        None
+    }
+
+    pub(crate) fn devices() -> Result<Vec<String>> {
+        let r: Result<Vec<String>> = block::list()?
+            .into_iter()
+            .filter(|dev| {
+                dev.model
+                    .as_ref()
+                    .filter(|m| m.as_str().trim() == MODEL)
+                    .is_some()
+            })
+            .filter_map(filtermap_child_ntfs)
+            .map(|dev: String| {
+                // Azure helpfully sets it up as NTFS,
+                // so we need to wipe that.
+                block::wipefs(&dev)?;
+                Ok(dev)
+            })
+            .collect();
+        Ok(r?)
     }
 }
 
@@ -183,17 +240,13 @@ mod qemu {
     pub(crate) fn devices() -> Result<Vec<String>> {
         Ok(block::list()?
             .into_iter()
-            .filter_map(|dev| {
-                if let Some(serial) = dev.serial.as_ref() {
-                    if serial.trim().starts_with(PREFIX) {
-                        Some(dev.path())
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
+            .filter(|dev| {
+                dev.serial
+                    .as_ref()
+                    .filter(|serial| serial.trim().starts_with(PREFIX))
+                    .is_some()
             })
+            .map(|dev| dev.path())
             .collect())
     }
 }
@@ -219,6 +272,7 @@ mod systemd {
                 f,
                 r##"[Unit]
 Before=local-fs.target
+RequiresMountsFor={what_path}
 
 [Mount]
 What={what_path}
@@ -264,34 +318,48 @@ fn main() -> Result<()> {
     if config.directories.is_empty() {
         bail!("Specified directories list is empty");
     }
-    let ephemeral = match coreos::get_platform()?.as_str() {
+
+    // Find all instance-local devices
+    let instance_devs = match coreos::get_platform()?.as_str() {
         "aws" => aws::devices()?,
+        "azure" => azure::devices()?,
         "qemu" => qemu::devices()?,
         other => {
             println!("Unhandled platform: {}", other);
             return Ok(());
         }
     };
-    let dev = match ephemeral.len() {
+
+    // Discover all instance-local block devices
+    let dev = match instance_devs.len() {
+        // Not finding any devices isn't currently an error; we want to
+        // support being run from instance types that don't have any
+        // allocated.
         0 => {
             println!("No ephemeral devices found.");
             return Ok(());
         }
-        1 => Cow::Borrowed(&ephemeral[0]),
+        // If there's just one block device, we use it directly
+        1 => Cow::Borrowed(&instance_devs[0]),
+        // If there are more than one, we default to creating a striped LVM volume
+        // across them.
         _ => Cow::Owned(lvm::new_striped_lv(
             "striped",
             "coreos-instance-vg",
-            &ephemeral,
+            &instance_devs,
         )?),
     };
     let dev = dev.as_str();
-    let label = "ccisp-store";
+
+    // Format as XFS
     Command::new("mkfs.xfs")
-        .args(&["-L", label])
+        .args(&["-L", LABEL])
         .arg(dev)
         .run()?;
+
+    // Create the mountpoint and mount unit, and mount it
     create_dir(MOUNTPOINT).context("creating mountpoint")?;
-    let dev = format!("/dev/disk/by-label/{}", label);
+    let dev = format!("/dev/disk/by-label/{}", LABEL);
     let mountunit = systemd::write_mount_unit(&dev, MOUNTPOINT, "xfs", None)
         .context("failed to write mount unit")?;
     Command::new("systemctl").arg("daemon-reload").run()?;
@@ -299,7 +367,13 @@ fn main() -> Result<()> {
         .args(&["enable", "--now"])
         .arg(&mountunit)
         .run()?;
+    // We need to ensure it has a SELinux label.
     selinux::copy_context("/var", MOUNTPOINT)?;
+
+    // Iterate over the desired directories (should be under /var)
+    // that we want to have mounted instance-local.  Software
+    // using these directories should ideally be prepared to start
+    // with it empty.
     let root = openat::Dir::open("/").context("opening /")?;
     let mut units = Vec::new();
     for d in config.directories.iter().map(Path::new) {
@@ -325,6 +399,7 @@ fn main() -> Result<()> {
         )?);
         println!("Set up {:?} to use instance storage", d);
     }
+    // Enable+start all the mount units we set up
     Command::new("systemctl").arg("daemon-reload").run()?;
     for unit in units {
         Command::new("systemctl")
