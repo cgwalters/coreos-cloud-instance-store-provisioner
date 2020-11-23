@@ -4,7 +4,7 @@ kind: MachineConfig
 metadata:
   labels:
     machineconfiguration.openshift.io/role: worker
-  name: 50-coreos-cloud-instance-provisioner
+  name: 50-worker-coreos-cloud-instance-provisioner
 spec:
   config:
     ignition:
