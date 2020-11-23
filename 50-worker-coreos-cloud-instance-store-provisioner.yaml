@@ -21,7 +21,7 @@ spec:
           [Unit]
           After=network-online.target
           Requires=network-online.target
-          Before=machine-config-daemon-firstboot.service
+          Before=machine-config-daemon-pull.service
           ConditionKernelCommandLine=ignition.firstboot
 
           [Service]
