@@ -53,6 +53,16 @@ for much improved etcd performance!
 
 None yet.  You could be the first on your block to do it!
 
-## Caveats
+## Support for losing the instance store
 
-I haven't done any testing around what happens if the instance storage is lost.
+I tested with this simple script:
+
+```
+#!/bin/bash
+systemctl stop kubelet
+systemctl stop cri-o
+rm -rf /var/mnt/instance-storage/* -rf
+reboot
+```
+
+The worker node rebooted and came back just fine.
