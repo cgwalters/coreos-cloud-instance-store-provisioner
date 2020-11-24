@@ -141,7 +141,7 @@ mod lvm {
     pub(crate) fn new_striped_lv(
         lvname: &str,
         vgname: &str,
-        devices: &Vec<String>,
+        devices: &[String],
     ) -> Result<String> {
         for dev in devices {
             pvcreate(&dev)?;
