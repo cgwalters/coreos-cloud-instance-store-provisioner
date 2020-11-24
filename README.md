@@ -52,3 +52,7 @@ for much improved etcd performance!
 ## Benchmarks
 
 None yet.  You could be the first on your block to do it!
+
+## Caveats
+
+I haven't done any testing around what happens if the instance storage is lost.
