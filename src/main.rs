@@ -175,8 +175,6 @@ mod aws {
 }
 
 // This one is totally made up for local testing; use e.g.
-// cosa run --bind-ro /var/srv/walters/src/github/cgwalters/coreos-cloud-instance-store-provisioner/,/run/workdir -- -device nvme,drive=one,serial=CoreOSQEMUInstance1
-// -drive if=none,id=one,file=/tmp/empty.qcow2  -device nvme,drive=two,serial=CoreOSQEMUInstance2 -drive if=none,id=two,file=/tmp/empty2.qcow2
 mod qemu {
     use super::*;
 

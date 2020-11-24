@@ -3,19 +3,24 @@ variant: fcos
 version: 1.0.0
 systemd:
   units:
+    - name: zincati.service
+      dropins:
+        - name: disabled.conf
+          contents: |
+            [Unit]
+            # Disable zincati, we're going to do our own updates
+            ConditionPathExists=/nosuchfile
     - name: ccisp.service
       enabled: true
       contents: |
         [Unit]
-        After=network-online.target
-        Requires=network-online.target
-        Before=machine-config-daemon-firstboot.service
         ConditionKernelCommandLine=ignition.firstboot
 
         [Service]
         Type=oneshot
         RemainAfterExit=yes
-        ExecStart=/bin/sh -c 'curl -L -o /usr/local/bin/ccisp https://fedorapeople.org/~walters/coreos-cloud-instance-store-provisioner && chmod a+x /usr/local/bin/ccisp && /usr/local/bin/ccisp'
+        ExecStartPre=/bin/install /run/srcdir/target/release/coreos-cloud-instance-store-provisioner /usr/local/bin
+        ExecStart=/usr/local/bin/coreos-cloud-instance-store-provisioner
 
         [Install]
         WantedBy=multi-user.target
