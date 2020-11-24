@@ -38,3 +38,7 @@ You must configure the control plane "day 0" by providing
 There is a `50-master-coreos-cloud-instance-store-provisioner.yaml`
 you can use that is set up to do both directories.  Get ready
 for much improved etcd performance!
+
+(Tip: You may like using [xokdinst](https://github.com/cgwalters/xokdinst)
+ which makes it much [more ergonomic to provide additional manifests](https://github.com/cgwalters/xokdinst#nicer-flow-for-injecting-manifests),
+ among other things, but it's just an `openshift-install` wrapper.)
