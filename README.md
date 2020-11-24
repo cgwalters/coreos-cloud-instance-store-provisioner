@@ -48,3 +48,7 @@ for much improved etcd performance!
 (Tip: You may like using [xokdinst](https://github.com/cgwalters/xokdinst)
  which makes it much [more ergonomic to provide additional manifests](https://github.com/cgwalters/xokdinst#nicer-flow-for-injecting-manifests),
  among other things, but it's just an `openshift-install` wrapper.)
+
+## Benchmarks
+
+None yet.  You could be the first on your block to do it!
