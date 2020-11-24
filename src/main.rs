@@ -285,9 +285,14 @@ fn main() -> Result<()> {
         )?),
     };
     let dev = dev.as_str();
-    Command::new("mkfs.xfs").arg(dev).run()?;
+    let label = "ccisp-store";
+    Command::new("mkfs.xfs")
+        .args(&["-L", label])
+        .arg(dev)
+        .run()?;
     create_dir(MOUNTPOINT).context("creating mountpoint")?;
-    let mountunit = systemd::write_mount_unit(dev, MOUNTPOINT, "xfs", None)
+    let dev = format!("/dev/disk/by-label/{}", label);
+    let mountunit = systemd::write_mount_unit(&dev, MOUNTPOINT, "xfs", None)
         .context("failed to write mount unit")?;
     Command::new("systemctl").arg("daemon-reload").run()?;
     Command::new("systemctl")
