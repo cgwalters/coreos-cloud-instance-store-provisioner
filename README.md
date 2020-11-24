@@ -2,13 +2,13 @@
 
 This is WIP for https://hackmd.io/dTUvY7BIQIu_vFK5bMzYvg
 
-## Quickstart w/OpenShift 4
+## Quickstart w/OpenShift 4 (for workers)
 
 The only supported platform at the moment is AWS.  More coming.
 
 ### Create a MachineConfig to set this up:
 
-`oc create -f 43-coreos-cloud-instance-store-provisioner.yaml`
+`oc create -f 50-worker-coreos-cloud-instance-store-provisioner.yaml`
 
 Wait for the worker MCP to roll out to the latest (`oc get machineconfigpool/worker`).
 Note: Existing machines will be reconfigured but do not actually change state in practice.
@@ -24,4 +24,17 @@ Scale up the machineset:
 When the new node joins the cluster, use e.g. `oc debug node/$node` and inspect `findmnt /var/lib/containers` - it should be a bind mount.
 
 
+## Configuring the control plane
 
+You can also configure the control plane to use this; there are
+two variants of that - one for just the control plane's `/var/lib/containers`,
+and one including that and `/var/lib/etcd`.  Doing both is by far
+the most interesting; if you don't have a schedulable control
+plane then just doing `/var/lib/containers` won't change too much.
+
+You must configure the control plane "day 0" by providing
+[additional manifests to the installer](https://github.com/openshift/installer/blob/master/docs/user/customization.md#install-time-customization-for-machine-configuration).
+
+There is a `50-master-coreos-cloud-instance-store-provisioner.yaml`
+you can use that is set up to do both directories.  Get ready
+for much improved etcd performance!
