@@ -4,7 +4,11 @@ This is WIP for https://hackmd.io/dTUvY7BIQIu_vFK5bMzYvg
 
 ## Quickstart w/OpenShift 4 (for workers)
 
-The only supported platform at the moment is AWS.  More coming.
+Supported platforms:
+
+ - AWS (e.g. `m5d` instances)
+ - Azure
+ - qemu (for quick local testing)
 
 ### Create a MachineConfig to set this up:
 
@@ -13,16 +17,18 @@ The only supported platform at the moment is AWS.  More coming.
 Wait for the worker MCP to roll out to the latest (`oc get machineconfigpool/worker`).
 Note: Existing machines will be reconfigured but do not actually change state in practice.
 
-### Edit the machineset to use a m5d type that has instance storage
+### AWS: Edit the machineset to use a m5d type that has instance storage
 
-Next, `oc -n openshift-machine-api edit machineset/$x` and change the instance type use e.g. `m5d.xlarge` (150GiB instance store).
+On AWS, if you haven't created the cluster with this by default, you need to:
+`oc -n openshift-machine-api edit machineset/$x` and change the instance type use e.g. `m5d.xlarge` (150GiB instance store).
 
-Scale up the machineset:
-
+Then scale up the machineset:
 `oc -n openshift-machine-api scale machineset/$x`
-
 When the new node joins the cluster, use e.g. `oc debug node/$node` and inspect `findmnt /var/lib/containers` - it should be a bind mount.
 
+### Azure: Default machine types have instance storage already
+
+In current IPI Azure installs the default `Standard_D8s_v3` machine type has 32GB of instance storage by default.
 
 ## Configuring the control plane
 
